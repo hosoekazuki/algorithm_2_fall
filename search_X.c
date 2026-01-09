@@ -1,75 +1,133 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdint.h>
+#include <string.h>
 
-#define MAX_N 1000000
-#define GRAM 3
-#define GSIZE 1000
-#define THRESH 4 
+#define L 15
+#define G3 3
+#define G4 4
+#define G3SIZE 1000
+#define G4SIZE 10000
+#define TH3 4
+#define MAXN 1000000
+#define MAXCAND 60000
 
-uint32_t *index_tbl[GSIZE];
-uint32_t index_sz[GSIZE];
-uint8_t counter[MAX_N];
+uint32_t *idx3[G3SIZE], *idx4[G4SIZE];
+uint32_t df3[G3SIZE], df4[G4SIZE];
+char db[MAXN][L+1];
+uint32_t N;
 
-static inline int gram_id(const char *s) {
-    for (int i = 0; i < GRAM; i++) {
-        if (s[i] < 'A' || s[i] > 'J') return -1;
-    }
+uint8_t mark[MAXN], cnt3[MAXN];
+uint32_t touched[MAXCAND];
+int tcnt;
+
+static inline int gram3(const char *s){
     return (s[0]-'A')*100 + (s[1]-'A')*10 + (s[2]-'A');
 }
+static inline int gram4(const char *s){
+    return (s[0]-'A')*1000 + (s[1]-'A')*100
+         + (s[2]-'A')*10   + (s[3]-'A');
+}
 
-int main(int argc, char *argv[]) {
-    if (argc < 3) return 1;
+/* df 昇順ソート */
+int cmp_df4(const void *a, const void *b){
+    uint32_t x = df4[*(int*)a];
+    uint32_t y = df4[*(int*)b];
+    return (x > y) - (x < y);
+}
 
-    // 索引ファイルの読み込み (argv[2])
-    FILE *idx = fopen(argv[2], "rb");
-    if (!idx) return 1;
-    
-    uint32_t max_id = 0;
-    for (int g = 0; g < GSIZE; g++) {
-        if (fread(&index_sz[g], sizeof(uint32_t), 1, idx) != 1) break;
-        if (index_sz[g] > 0) {
-            index_tbl[g] = malloc(index_sz[g] * sizeof(uint32_t));
-            fread(index_tbl[g], sizeof(uint32_t), index_sz[g], idx);
-            for (uint32_t k = 0; k < index_sz[g]; k++) {
-                if (index_tbl[g][k] > max_id) max_id = index_tbl[g][k];
-            }
+/* 編集距離 ≤3 */
+int edit_distance_le3(const char *a, const char *b){
+    int dp[L+1][L+1];
+    for(int i=0;i<=L;i++) dp[i][0]=i;
+    for(int j=0;j<=L;j++) dp[0][j]=j;
+
+    for(int i=1;i<=L;i++){
+        int rmin = 100;
+        for(int j=1;j<=L;j++){
+            int c = (a[i-1]==b[j-1]) ? 0 : 1;
+            int v = dp[i-1][j] + 1;
+            if(dp[i][j-1] + 1 < v) v = dp[i][j-1] + 1;
+            if(dp[i-1][j-1] + c < v) v = dp[i-1][j-1] + c;
+            dp[i][j] = v;
+            if(v < rmin) rmin = v;
         }
+        if(rmin > 3) return 4;
     }
-    fclose(idx);
-    uint32_t db_size = max_id + 1;
+    return dp[L][L];
+}
 
-    // クエリデータの読み込み (argv[1])
-    FILE *qry = fopen(argv[1], "r");
-    if (!qry) return 1;
+int main(int argc, char **argv){
+    FILE *qf = fopen(argv[1], "r");
+    FILE *fp = fopen(argv[2], "rb");
 
-    char q[64];
-    char *out_line = malloc(db_size + 1);
+    fread(&N, 4, 1, fp);
 
-    while (fgets(q, sizeof(q), qry)) {
-        q[strcspn(q, "\r\n")] = '\0';
-        int len = strlen(q);
+    for(int g=0; g<G3SIZE; g++){
+        fread(&df3[g], 4, 1, fp);
+        idx3[g] = malloc(df3[g] * 4);
+        fread(idx3[g], 4, df3[g], fp);
+    }
+    for(int g=0; g<G4SIZE; g++){
+        fread(&df4[g], 4, 1, fp);
+        idx4[g] = malloc(df4[g] * 4);
+        fread(idx4[g], 4, df4[g], fp);
+    }
 
-        for (int i = 0; i <= len - GRAM; i++) {
-            int g = gram_id(q + i);
-            if (g != -1) {
-                for (uint32_t k = 0; k < index_sz[g]; k++) {
-                    counter[index_tbl[g][k]]++;
+    fread(db, L+1, N, fp);
+
+    char q[32];
+    while(fgets(q, sizeof(q), qf)){
+        q[strcspn(q, "\n")] = '\0';   // ★ 修正点
+        if(strlen(q) < L){
+            putchar('0');
+            continue;
+        }
+
+        int g3[32], g4[32], n3=0, n4=0;
+        for(int i=0;i<=L-G3;i++) g3[n3++] = gram3(q+i);
+        for(int i=0;i<=L-G4;i++) g4[n4++] = gram4(q+i);
+
+        qsort(g4, n4, sizeof(int), cmp_df4);
+
+        tcnt = 0;
+        for(int i=0;i<n4 && tcnt < MAXCAND;i++){
+            int g = g4[i];
+            for(uint32_t k=0;k<df4[g];k++){
+                uint32_t id = idx4[g][k];
+                if(!mark[id]){
+                    mark[id]=1;
+                    touched[tcnt++] = id;
+                    if(tcnt >= MAXCAND) break;
                 }
             }
         }
 
-        // ビットベクトル生成
-        for (uint32_t id = 0; id < db_size; id++) {
-            out_line[id] = (counter[id] >= THRESH) ? '1' : '0';
-            counter[id] = 0; 
+        for(int i=0;i<n3;i++){
+            int g = g3[i];
+            for(uint32_t k=0;k<df3[g];k++){
+                uint32_t id = idx3[g][k];
+                if(mark[id]) cnt3[id]++;
+            }
         }
-        out_line[db_size] = '\0';
-        puts(out_line);
-    }
 
-    free(out_line);
-    fclose(qry);
+        int ok = 0;
+        for(int i=0;i<tcnt;i++){
+            uint32_t id = touched[i];
+            if(cnt3[id] >= TH3 &&
+               edit_distance_le3(q, db[id]) <= 3){
+                ok = 1;
+                break;
+            }
+        }
+
+        for(int i=0;i<tcnt;i++){
+            uint32_t id = touched[i];
+            mark[id] = cnt3[id] = 0;
+        }
+
+        putchar(ok ? '1' : '0');
+    }
+    putchar('\n');
     return 0;
 }

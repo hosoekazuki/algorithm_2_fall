@@ -1,64 +1,67 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdint.h>
+#include <string.h>
 
 #define L 15
-#define GRAM 3
-#define GSIZE 1000 // 10^3 (A-J)
+#define G3 3
+#define G4 4
+#define G3SIZE 1000
+#define G4SIZE 10000
+#define MAXN 1000000
 
 typedef struct {
-    uint32_t *ids;
-    uint32_t size;
-    uint32_t cap;
+    uint32_t *id;
+    uint32_t sz, cap;
 } Posting;
 
-Posting index_tbl[GSIZE];
+Posting idx3[G3SIZE], idx4[G4SIZE];
+char db[MAXN][L+1];
+uint32_t N = 0;
 
-static inline int gram_id(const char *s) {
-    for (int i = 0; i < GRAM; i++) {
-        if (s[i] < 'A' || s[i] > 'J') return -1;
-    }
+static inline int gram3(const char *s){
     return (s[0]-'A')*100 + (s[1]-'A')*10 + (s[2]-'A');
 }
-
-void push_posting(int g, uint32_t id) {
-    if (g < 0 || g >= GSIZE) return;
-    Posting *p = &index_tbl[g];
-    if (p->size == p->cap) {
-        p->cap = p->cap ? p->cap * 2 : 8;
-        p->ids = realloc(p->ids, p->cap * sizeof(uint32_t));
-    }
-    p->ids[p->size++] = id;
+static inline int gram4(const char *s){
+    return (s[0]-'A')*1000 + (s[1]-'A')*100
+         + (s[2]-'A')*10   + (s[3]-'A');
 }
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) return 1;
+void push(Posting *p, uint32_t id){
+    if(p->sz == p->cap){
+        p->cap = p->cap ? p->cap * 2 : 4;
+        p->id = realloc(p->id, p->cap * sizeof(uint32_t));
+    }
+    p->id[p->sz++] = id;
+}
 
-    FILE *db = fopen(argv[1], "r");
-    if (!db) return 1;
+int main(int argc, char **argv){
+    FILE *fp = fopen(argv[1], "r");
+    char s[32];
 
-    char buf[64];
-    uint32_t id = 0;
+    while(fgets(s, sizeof(s), fp)){
+        s[strcspn(s, "\n")] = '\0';   // ★ 修正点
+        if(strlen(s) < L) continue;
 
-    while (fgets(buf, sizeof(buf), db)) {
-        buf[strcspn(buf, "\r\n")] = '\0';
-        int len = strlen(buf);
-        for (int i = 0; i <= len - GRAM; i++) {
-            int g = gram_id(buf + i);
-            if (g != -1) push_posting(g, id);
-        }
-        id++;
+        strcpy(db[N], s);
+
+        for(int i=0;i<=L-G3;i++) push(&idx3[gram3(s+i)], N);
+        for(int i=0;i<=L-G4;i++) push(&idx4[gram4(s+i)], N);
+        N++;
     }
 
-    // 標準出力(STDOUT)に書き出し
-    for (int g = 0; g < GSIZE; g++) {
-        fwrite(&index_tbl[g].size, sizeof(uint32_t), 1, stdout);
-        if (index_tbl[g].size > 0) {
-            fwrite(index_tbl[g].ids, sizeof(uint32_t), index_tbl[g].size, stdout);
-        }
+    /* ===== STDOUT ===== */
+    fwrite(&N, 4, 1, stdout);
+
+    for(int g=0; g<G3SIZE; g++){
+        fwrite(&idx3[g].sz, 4, 1, stdout);
+        fwrite(idx3[g].id, 4, idx3[g].sz, stdout);
+    }
+    for(int g=0; g<G4SIZE; g++){
+        fwrite(&idx4[g].sz, 4, 1, stdout);
+        fwrite(idx4[g].id, 4, idx4[g].sz, stdout);
     }
 
-    fclose(db);
+    fwrite(db, L+1, N, stdout);
     return 0;
 }
